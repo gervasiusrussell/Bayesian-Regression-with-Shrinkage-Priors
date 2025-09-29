@@ -1,0 +1,178 @@
+---
+title: "Tugas_Bayes"
+author: "russell"
+date: "2024-11-17"
+output: html_document
+---
+
+```{r}
+setwd("C:/Users/gerva/OneDrive/Documents/BINUS/SEM 3/BAYES/tugas")
+data <- read.csv("homes_mapping_file.txt", header = TRUE, sep = "\t")
+head(data)
+```
+```{r}
+str(data)
+```
+NumberBedroooms is a char so we have to fix it
+
+-check unique value of the column
+```{r}
+unique(data$NumberBedroooms)
+```
+- there is 6 or more
+```{r}
+data$NumberBedroooms[data$NumberBedroooms == '6 or more'] <- 6
+unique(data$NumberBedroooms)
+```
+- change datatype to int and log it
+```{r}
+data[,'NumberBedroooms'] <- as.numeric(data$NumberBedroooms)
+data[,'NumberBedroooms'] <- log(data[,'NumberBedroooms'])
+str(data)
+```
+
+- make a new dataframe that only includes the needed variables
+```{r}
+datanew <- data[, c(6,7,9,11)]
+head(datanew)
+```
+- check missing val
+```{r}
+colSums(is.na(datanew))
+```
+x1 = temp
+x2 = precip
+x3 = elevation
+y = log bedroom
+
+uninformative gaussian
+beta j ~ normal(0,1000)
+```{r}
+set.seed(123)
+#Rumus linear regressi
+#y <- b0 + b1*x1 + b2*x2 + b3*x3 + error
+
+# JAGS require all the data to be packaged as a list
+library(rjags)
+library(coda)
+
+# Prepare data for JAGS
+data_jags <- list(
+  y = datanew$NumberBedroooms,
+  x1 = datanew$MeanAnnual.Temperature,
+  x2 = datanew$MeanAnnualPrecipitation,
+  x3 = datanew$Elevation,
+  n = nrow(datanew)
+)
+
+## 1. Define model as a string
+model_string <- textConnection("model{
+      #likelohood
+      for(i in 1:n){
+        y[i] ~ dnorm(b0 + b1*x1[i] + b2*x2[i] + b3*x3[i], tau)
+      }
+      
+      #prior
+      tau ~ dgamma(0.1, 0.1)
+      sigma <- 1/sqrt(tau)
+      b0 ~ dnorm(0,1000)
+      b1 ~ dnorm(0,1000)
+      b2 ~ dnorm(0,1000)
+      b3 ~ dnorm(0,1000)
+}")
+
+## 2. Load the data and compile the MCMC code
+inits <- list(b0=rnorm(1),b1=rnorm(1),b2=rnorm(1),b3=rnorm(1),tau=10)
+model <- jags.model(model_string,data=data_jags,inits=inits, n.chains = 2, quiet = TRUE)
+
+## 3. Burn-in for 10000 samples
+update(model,10000,progress.bar = "none")
+
+## 4. Generate 20000 post-burn-in samples and retain the parameters named in "params"
+params <- c("b0","b1","b2","b3","sigma")
+samples <- coda.samples(model, variable.names = params, n.iter = 20000, progress.bar="none")
+
+## 5. Summarize the output
+summary(samples)
+# plot(samples)
+
+# if the figure margin is too large then use this code
+plot(samples[, c("b0", "b1")])
+plot(samples[, c("b2")])
+plot(samples[, c("b3","sigma")])
+```
+INTERPRETATION
+- all the plot are stable and well mix
+- all are convergent meaning MCMC is sucessfull and explored the posterior dist effectively
+
+-b1 density is around small positive value meaning weak posisitve relationship between temp and log nbedroom (higher temp slightly increase n bedroom)
+- b2 also small positive val also weak positive realtionship (higher precipitation only slightly increase lognbedroom)
+-b3 is also small positive but very close to zero (not so meaningful effect to log n bedroom)
+- sigma the plot si narrow indicating high certainty about the error term in the model
+
+
+GAUSSIAN SHRINKAGE
+TAU B ~ INVGAMMA(0.1,0.1)
+
+```{r}
+set.seed(123)
+#Rumus linear regressi
+#y <- b0 + b1*x1 + b2*x2 + b3*x3 + error
+
+# JAGS require all the data to be packaged as a list
+library(rjags)
+
+# Prepare data for JAGS
+data_jags <- list(
+  y = datanew$NumberBedroooms,
+  x1 = datanew$MeanAnnual.Temperature,
+  x2 = datanew$MeanAnnualPrecipitation,
+  x3 = datanew$Elevation,
+  n = nrow(datanew)
+)
+
+## 1. Define model as a string
+model_string <- textConnection("model{
+      #likelohood
+      for(i in 1:n){
+        y[i] ~ dnorm(b0 + b1*x1[i] + b2*x2[i] + b3*x3[i], tau)
+      }
+      
+      taub1 ~ dgamma(0.1, 0.1)
+      taub2 ~ dgamma(0.1, 0.1)
+      taub3 ~ dgamma(0.1, 0.1)
+      
+      #prior
+      tau ~ dgamma(0.1, 0.1)
+      sigma <- 1/sqrt(tau)
+      
+      b0 ~ dnorm(0,1000)
+      b1 ~ dnorm(0,1/taub1)
+      b2 ~ dnorm(0,1/taub2)
+      b3 ~ dnorm(0,1/taub3)
+}")
+
+## 2. Load the data and compile the MCMC code
+inits <- list(b0=rnorm(1),b1=rnorm(1),b2=rnorm(1),b3=rnorm(1),tau=10)
+
+model <- jags.model(model_string,data=data_jags,inits=inits, n.chains = 2, quiet = TRUE)
+
+## 3. Burn-in for 10000 samples
+update(model,10000,progress.bar = "none")
+
+## 4. Generate 20000 post-burn-in samples and retain the parameters named in "params"
+params <- c("b0","b1","b2","b3","sigma")
+samples <- coda.samples(model, variable.names = params,n.iter = 20000,progress.bar="none")
+
+## 5. Summarize the output
+summary(samples)
+# plot(samples)
+plot(samples[, c("b0", "b1")])
+plot(samples[, c("b2")])
+plot(samples[, c("b3","sigma")])
+```
+INTERPRETATION
+- as we can see the b123 and sigma all mean value is closer to zero as the gaussian shrinkage makes it shrink to near zero especially for variables that is weak or minimal evidence in the data
+- the plot are narrower
+- the gaussian shrinkage will help with handling overfitting
+- the b123 is still weak positive but closer to zero
